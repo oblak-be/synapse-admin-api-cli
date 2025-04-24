@@ -7,7 +7,7 @@ This is a CLI tool written in **Bash** to interact with the Synapse Admin API.
 The installation of this tool is pretty straigthforward. Just clone this repository and run the installation script.
 
 ```bash
-git clone <>
+git clone https://github.com/oblak-be/synapse-admin-api-cli.git
 cd synapse-admin-api-cli/
 ./install.sh
 ```

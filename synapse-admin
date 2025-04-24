@@ -1,0 +1,443 @@
+#!/bin/bash
+
+# Constants
+CACHE_DIR="/dev/shm/synapse-admin"
+CONFIG_DIR="/etc/synapse-admin"
+CONFIG_FILE="$CONFIG_DIR/cli.conf"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+	echo "[ERROR] Config file $CONFIG_FILE not found, exiting."
+	exit 1
+fi
+
+# Environment
+source $CONFIG_FILE
+
+# Libraries
+
+source $PWD/lib/preflight.sh
+source $PWD/lib/synapse-api.sh
+source $PWD/lib/help.sh
+
+# Variables
+SESSION_DIR="$CACHE_DIR/$(openssl rand -hex 8)"
+
+function main() {
+
+	verb=$1
+	resource=$2
+	first_flag_key=$3
+	first_flag_value=$4
+	second_flag_key=$5
+	second_flag_value=$6
+
+	mkdir -p $SESSION_DIR
+
+	if [ -z "$verb" ] || [ "$verb" == "help" ]; then
+
+		general_help
+	fi
+
+	if [ "$verb" == "get" ]; then
+	
+		if [ -z "$resource" ]; then
+
+			verb_help_get
+		fi
+
+		if [ "$resource" == "users" ] || [ "$resource" == "user" ] ; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_get_users
+			fi
+
+			if [ "$first_flag_key" == "--user-id" ]; then
+		
+				cget "v2" "users/$first_flag_value" > $SESSION_DIR/$first_flag_value.json
+
+				display_name=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.displayname')
+				username=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.name')
+
+				created=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.creation_ts' | cut -c 1-10)
+				last_seen=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.last_seen_ts' | cut -c 1-10)
+
+				admin=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.admin')
+				guest=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.is_guest')
+
+				deactivated=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.deactivated')
+				locked=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.locked')
+				suspended=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.suspended')
+
+				if [ -z "$second_flag_key" ]; then
+
+					echo ""
+					echo "User $display_name"
+					echo "------------------"
+					echo "username:    $username"
+					echo "created:     $(date -u --date=@$created)"
+					echo "last seen:   $(date -u --date=@$last_seen)"
+					echo ""
+					echo "Roles"
+					echo "------------------"
+					echo "admin:       $admin"
+					echo "guest:       $guest"
+					echo ""
+					echo "State"
+					echo "------------------"
+					echo "deactivated: $deactivated"
+					echo "locked:      $locked"
+					echo "suspended:   $suspended"
+				fi
+
+				if [ "$second_flag_key" == "--show-memberships" ]; then
+
+					cget "v1" "users/$first_flag_value/joined_rooms" > $SESSION_DIR/$first_flag_value.json		
+			
+					echo ""
+					echo "Memberships"
+					echo "------------------"
+					cat $SESSION_DIR/$first_flag_value.json | jq -r '.joined_rooms[]'
+				fi
+
+				if [ "$second_flag_key" == "--whois" ]; then
+
+					cget "v1" "whois/$first_flag_value" > $SESSION_DIR/$first_flag_value.json
+
+					ip_list=($(cat $SESSION_DIR/$first_flag_value.json | jq -r '.devices."".sessions[].connections[].ip'))
+
+					echo ""
+					echo "Sessions"
+					echo "--------"
+
+					for ip in ${!ip_list[@]}; do
+
+						ipv4=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.devices."".sessions[].connections['$ip'].ip')
+						user_agent=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.devices."".sessions[].connections['$ip'].user_agent')
+						last_seen=$(cat $SESSION_DIR/$first_flag_value.json | jq -r '.devices."".sessions[].connections['$ip'].last_seen' | cut -c 1-10)
+					
+						echo "ipv4: $ipv4"
+						echo "user agent: $user_agent"
+						echo "last seen: $(date -u --date=@$last_seen)"
+						echo ""
+					done
+					echo "Total known connections: ${#ip_list[@]}"
+				fi
+			fi
+
+			if [ "$first_flag_key" == "--all" ]; then
+		
+				user_count=$(cget "v2" "users" "limit=0&deactivated=true&locked=true" | jq -r '.total')
+				cget "v2" "users" "limit=$user_count&deactivated=true&locked=true" > $SESSION_DIR/all_users.json
+
+				if [ "$first_flag_value" == "--output" ]; then
+
+					cat $SESSION_DIR/all_users.json | jq '.users[]' | tee $second_flag_key
+				
+					echo ""
+					echo "Total users: $user_count"
+				else
+					cat $SESSION_DIR/all_users.json | jq '.'
+				fi
+			fi
+
+			if [ "$first_flag_key" == "--statistics" ]; then
+
+				# user_count=$(cget "v1" "statistics/users/media" "limit=0" | jq -r '.total')
+				cget "v1" "statistics/users/media" "limit=100&order_by=media_length&dir=b" > $SESSION_DIR/user-statistics.json
+				user_list=($(cat $SESSION_DIR/user-statistics.json | jq -r '.users[].user_id'))
+
+				echo "Top 100 Users:"
+				echo "-------------"
+				for user in ${!user_list[@]}; do
+
+					user_id=$(cat $SESSION_DIR/user-statistics.json | jq -r '.users['$user'].user_id')
+					display_name=$(cat $SESSION_DIR/user-statistics.json | jq -r '.users['$user'].displayname')
+					media_count=$(cat $SESSION_DIR/user-statistics.json | jq -r '.users['$user'].media_count')
+					media_size_in_bytes=$(cat $SESSION_DIR/user-statistics.json | jq -r '.users['$user'].media_length')
+
+					size_in_mb=$(expr $media_size_in_bytes /  1048576)
+
+					if [ "$size_in_mb" -ge 1000 ]; then
+						size_in_gb=$(expr $size_in_mb / 1024)
+						size="$size_in_gb GB"
+					else
+						size="$size_in_mb MB"
+					fi
+
+					echo "$(expr $user + 1). User $display_name with ID $user_id"
+					echo "   media size: $size"
+					echo "   media count: $media_count"
+					echo ""		
+				done
+			fi
+		fi
+
+		if [ "$resource" == "rooms" ] || [ "$resource" == "room" ] ; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_get_rooms
+			fi
+
+			if [ "$first_flag_key" == "--room-id" ]; then
+
+				cget "v1" "rooms/$first_flag_value" > $SESSION_DIR/$first_flag_value.json
+
+				if [ -z "$second_flag_key" ]; then
+
+					cat $SESSION_DIR/$first_flag_value.json | jq '.'
+				fi
+
+				if [ "$second_flag_key" == "--show-members" ]; then
+
+					cget "v1" "rooms/$first_flag_value/members" > $SESSION_DIR/$first_flag_value.json		
+					cat $SESSION_DIR/$first_flag_value.json | jq '.'
+				fi
+		
+				if [ "$second_flag_key" == "--is-blocked" ]; then
+
+					block_state=$(cget "v1" "rooms/$first_flag_value/block" | jq -r '.block')
+
+					if [ "$block_state" == "true" ]; then
+
+						echo "Room $first_flag_value is blocked"
+					fi
+
+					if [ "$block_state" == "false" ]; then
+
+						echo "Room $first_flag_value is not blocked"
+					fi
+				fi
+			fi
+		
+			if [ "$first_flag_key" == "--all" ]; then
+
+				room_count=$(cget "v1" "rooms" "limit=0" | jq -r '.total_rooms')
+				cget "v1" "rooms" "limit=$room_count" > $SESSION_DIR/all_rooms.json
+
+				if [ "$first_flag_value" == "--output" ]; then
+
+					cat $SESSION_DIR/all_rooms.json | jq '.rooms[]' | tee $second_flag_key
+				
+					echo ""
+					echo "Total rooms: $room_count"
+				else
+					cat $SESSION_DIR/all_rooms.json | jq '.'
+				fi
+			fi
+		
+			if [ "$first_flag_key" == "--statistics" ]; then
+
+				cget "v1" "statistics/database/rooms" > $SESSION_DIR/room-statistics.json
+				room_list=($(cat $SESSION_DIR/room-statistics.json | jq -r '.rooms[].room_id'))
+
+				echo "Top 10 Rooms:"
+				echo "-------------"
+				for room in ${!room_list[@]}; do
+
+					room_id=$(cat $SESSION_DIR/room-statistics.json | jq -r '.rooms['$room'].room_id')
+					size_in_bytes=$(cat $SESSION_DIR/room-statistics.json | jq -r '.rooms['$room'].estimated_size')
+				
+					size_in_mb=$(expr $size_in_bytes /  1048576)
+
+					if [ "$size_in_mb" -ge 1000 ]; then
+						size_in_gb=$(expr $size_in_mb / 1024)
+						size="$size_in_gb GB"
+					else
+						size="$size_in_mb MB"
+					fi
+
+					echo "$(expr $room + 1). room with ID $room_id"
+					echo "   estimated size: $size"
+					echo ""
+				done
+			fi
+		fi
+
+		if [ "$resource" == "job" ] || [ "$resource" == "jobs" ]; then
+
+			cget "v1" "background_updates/status" | jq '.'
+		fi
+
+		if [ "$resource" == "federation" ]; then
+
+			federation_count=$(cget "v1" "federation/destinations" "limit=0" | jq -r '.total')
+			cget "v1" "federation/destinations" "limit=$federation_count" > $SESSION_DIR/federation-statistics.json
+
+			echo "Federation statistics:"
+			echo "----------------------"
+			echo "Destinations: $federation_count"
+		fi
+
+		if [ "$resource" == "version" ]; then
+
+			cget "v1" "server_version" | jq
+		fi
+	fi
+
+	if [ "$verb" == "create" ]; then
+
+		if [ -z "$resource" ]; then
+
+			verb_help_create
+		fi
+
+		if [ "$resource" == "job" ] || [ "$resource" == "jobs" ]; then
+
+			if [ -z "$first_flag_key" ]; then
+
+				resource_help_create_jobs
+			fi
+
+			if [ "$first_flag_key" == "--regenerate-directory" ]; then
+
+				cpost "v1" "background_updates/start_job" '{ "job_name": "regenerate_directory" }'
+			fi
+
+			if [ "$first_flag_key" == "--populate-stats" ]; then
+
+				cpost "v1" "background_updates/start_job" '{ "job_name": "populate_stats_process_rooms" }'
+			fi
+		fi
+
+		if [ "$resource" == "notice" ] || [ "$resource" == "notices" ]; then
+
+			if [ -z "$first_flag_key" ]; then
+			
+				resource_help_create_notices
+			fi
+
+			if [ "$first_flag_key" == "--message" ]; then
+
+				cpost "v1" "send_server_notice" '{ "user_id": '$SYNAPSE_ADMIN_USER', "content": { "msgtype": "m.text", "body": '$first_flag_value' } }'
+			fi
+		fi
+	fi
+
+	if [ "$verb" == "update" ]; then
+
+		if [ -z "$resource" ]; then
+
+			verb_help_update
+		fi
+
+		if [ "$resource" == "users" ] || [ "$resource" == "user" ] ; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_update_users
+			fi
+
+			if [ "$first_flag_key" == "--user-id" ]; then
+
+				if [ -z "$second_flag_key" ]; then
+
+					echo "[WARNING] Missing update action, choose --deactivate, --lock or --suspend"
+				fi
+ 		
+				if [ "$second_flag_key" == "--deactivate" ]; then
+
+					cpost "v1" "deactivate/$first_flag_value" '{ "erase": false }' | jq
+					echo "[WARNING] Deactivated user $first_flag_value"
+				fi
+
+				if [ "$second_flag_key" == "--suspend" ]; then
+
+					cpost "v1" "suspend/$first_flag_value" '{ "suspend": true }' | jq
+					echo "[WARNING] Suspended user $first_flag_value"
+				fi
+			
+				if [ "$second_flag_key" == "--locked" ]; then
+
+					echo "[WARNING] Not yet implemented"
+				fi
+			fi
+		fi
+
+		if [ "$resource" == "rooms" ] || [ "$resource" == "room" ] ; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_update_rooms
+			fi
+
+			if [ "$first_flag_key" == "--room-id" ]; then
+
+				if [ "$second_flag_key" == "--block" ]; then
+
+					cput "v1" "rooms/$first_flag_value/block" '{ "block": true }' | jq '.'
+				fi
+
+				if [ "$second_flag_key" == "--unblock" ]; then
+
+					cput "v1" "rooms/$first_flag_value/block" '{ "block": false }' | jq '.'
+				fi
+			fi
+		fi
+	fi
+
+	if [ "$verb" == "delete" ]; then
+
+		if [ -z "$resource" ]; then
+
+			verb_help_delete
+		fi
+		
+		if [ "$resource" == "media" ]; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_delete_media
+			fi
+
+			if [ "$first_flag_key" == "--user-id" ]; then
+
+				cdel "v1" "users/$first_flag_value/media" | jq
+			fi
+
+			if [ "$first_flag_key" == "--local" ]; then
+
+				ts_epoch=$(date -u -d "$first_flag_value" +%s%3N)
+				cpost "v1" "media/delete" '{}' "before_ts=$ts_epoch" | jq
+			fi
+
+			if [ "$first_flag_key" == "--remote" ]; then
+
+				ts_epoch=$(date -u -d "$first_flag_value" +%s%3N)
+				cpost "v1" "purge_media_cache" '{}' "before_ts=$ts_epoch" | jq
+			fi
+		fi
+
+		if [ "$resource" == "rooms" ] || [ "$resource" == "room" ] ; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_delete_rooms
+			fi
+
+			if [ "$first_flag_key" == "--room-id" ]; then
+
+				if [ "$second_flag_key" == "--history" ]; then
+
+					ts_epoch=$(date -u -d "$second_flag_value" +%s%3N)
+					cpost "v1" "purge_history/$first_flag_value" '{ "delete_local_events": true, "purge_up_to_ts": '$ts_epoch' }'
+				fi
+
+				if [ "$second_flag_key" == "--force" ]; then
+
+					cdel "v2" "rooms/$first_flag_value" '{ "block": false, "message": "This room is forcefully being deleted", "purge": true }'
+				fi
+
+				if [ "$second_flag_key" == "--status" ]; then
+
+					cget "v2" "rooms/$first_flag_value/delete_status"
+				fi
+			fi
+		fi
+	fi
+
+	rm -R $SESSION_DIR
+}
+
+main "$1" "$2" "$3" "$4" "$5" "$6"

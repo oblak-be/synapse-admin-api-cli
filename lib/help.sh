@@ -241,7 +241,7 @@ function resource_help_update_rooms() {
 	echo "Example:"
 	echo "--------"
 	echo ""
-	echo "synapse-admin update users --user-id @john:oblak.be --suspend"
+	echo "synapse-admin update rooms --room-id '!xfdfjsigedfsf:oblak.be' --block"
 }
 
 function resource_help_delete_media() {

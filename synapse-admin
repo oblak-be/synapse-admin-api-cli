@@ -255,9 +255,31 @@ function main() {
 			fi
 		fi
 
+		if [ "$resource" == "media" ]; then
+
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_get_media
+			fi
+			#cget "v1" "background_updates/status" | jq '.'
+			if [ "$first_flag_key" == "--room-id" ]; then
+
+				ffvf=$(echo $first_flag_value | sed 's/\!//' | sed 's/\:oblak\.be//')
+				echo $ffvf
+
+				cget "v1" "room/$first_flag_value/media" > $SESSION_DIR/$ffvf-media.json
+				cat $SESSION_DIR/$ffvf-media.json | jq '.'
+			fi
+
+		fi
+
 		if [ "$resource" == "job" ] || [ "$resource" == "jobs" ]; then
 
-			cget "v1" "background_updates/status" | jq '.'
+			if [ -z "$first_flag_key" ] || [ "$first_flag_key" == "--help" ]; then
+		
+				resource_help_get_jobs
+			fi
+			#cget "v1" "background_updates/status" | jq '.'
 		fi
 
 		if [ "$resource" == "federation" ]; then

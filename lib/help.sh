@@ -165,6 +165,40 @@ function resource_help_get_rooms() {
 	echo "synapse-admin get room  --room-id '!xfdfjsigedfsf:oblak.be'"
 	echo "synapse-admin get room  --room-id '!xfdfjsigedfsf:oblak.be' --show-members"
 }
+function resource_help_get_media() {
+
+	echo "options:"
+	echo "------"
+	echo ""
+	echo "--room-id            - list all media in room"
+	echo ""
+	echo "usage:"
+	echo "------"
+	echo ""
+	echo "synapse-admin get media --room-id [room-id]"
+	echo ""
+	echo "example:"
+	echo "--------"
+	echo ""
+	echo "synapse-admin get media --room-id '!xfdfjsigedfsf:oblak.be'"
+}
+function resource_help_get_jobs() {
+
+	echo "options:"
+	echo "------"
+	echo ""
+	echo "--all               - list all existing jobs"
+	echo ""
+	echo "usage:"
+	echo "------"
+	echo ""
+	echo "synapse-admin get jobs [options]"
+	echo ""
+	echo "example:"
+	echo "--------"
+	echo ""
+	echo "synapse-admin get jobs --all"
+}
 
 function resource_help_create_jobs() {
 
